@@ -1,6 +1,6 @@
 # pi-permissions Implementation Plan
 
-Status: handoff, 2026-11-14. No plugin implementation exists in this repository yet. `SPEC.md` is the target contract; this plan describes how to reach it without importing either source repository's tooling or full architecture.
+Status: M0 complete, 2026-11-14. A standalone, independently installable `pi-permissions` package and a verified bash-only human gate now exist in this repository. The gate is human-only (no model/policy/config shortcut), refuses non-interactive and non-chat contexts loudly, and asks a human to approve top-level interactive bash calls. M1 (deterministic policy and human review) is the next milestone.
 
 ## Working approach
 
