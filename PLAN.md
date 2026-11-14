@@ -1,6 +1,19 @@
 # pi-permissions Implementation Plan
 
-Status: M0 complete; M1 conservative core implemented and verified, 2026-11-14. Global blacklist-first exact rules, immutable snapshots, provenance-qualified intent/unknowns, serialized one-shot review, cancellation, and private bounded decision records now ship. Missing/invalid config leaves the gate active. Model work remains M2. M1 is not marked fully complete: built-in automatic easy-safe presets are deliberately deferred because shell/executable identity cannot be established; only explicit exact whitelists bypass human review. See `docs/M1-VERIFICATION.md`, `docs/M1-POLICY.md`, and `README.md` for evidence and limits.
+Status: **M0, M1 (conservative core) and M2 complete**, verified 2026-11-14. Global
+blacklist-first exact rules, immutable snapshots, provenance-qualified
+intent/unknowns, serialized one-shot review, cancellation, and private bounded
+decision records ship, plus an optional **shadow** Decisions Model whose every
+outcome is a proposal with no authority. Missing/invalid config leaves the gate
+active; a malformed model block switches only the model off, with a visible reason.
+
+M1 is not marked fully complete: built-in automatic easy-safe presets are
+deliberately deferred because shell/executable identity cannot be established; only
+explicit exact whitelists bypass human review. M2 ships no enforcement authority, no
+calibration and no held-out evaluation, so no profile is enabled by default and none
+is declared a winner. See [`docs/M1-VERIFICATION.md`](docs/M1-VERIFICATION.md),
+[`docs/M1-POLICY.md`](docs/M1-POLICY.md), [`docs/M2-MODEL.md`](docs/M2-MODEL.md) and
+[`README.md`](README.md) for evidence and limits.
 
 ## Working approach
 
@@ -52,17 +65,17 @@ Important findings already established:
 
 Goal: a minimal independently installable package and a verified enforcement seam before model work.
 
-- [ ] Record source revisions and licenses; create the reuse ledger and necessary notices as material is copied.
-- [ ] Add `package.json` named `pi-permissions`, explicit TypeScript extension entry, exact dependencies, Bun lockfile, strict TypeScript config, and a pinned development toolchain. No workspace catalogs, pnpm/Vitest requirement, or cross-checkout imports.
-- [ ] Add `bun run check`, `bun test`, formatting/linting, and `bun run verify`. Tests use `bun:test`; type checking runs separately. Keep live tests out of default discovery/verification.
-- [ ] Use Pi 1.5.2 development types. Follow host peer-package conventions without bundling Pi. Runtime code uses Node-compatible APIs; dev tooling may use Bun.
-- [ ] Read Pi 1.5.2 extension/package docs and relevant examples/source. Establish the supported built-in bash path, current cwd, effective shell prefix/backend, hook mutation/order, provenance events, and cancellation behavior.
-- [ ] Implement an active minimal bash-only gate: every covered call asks a human or blocks without a usable UI. Config/handler failures cannot unregister/bypass it. Leave all other tools unchanged.
-- [ ] Show startup activation and supported runtime/mode status. Unsupported runtime must not masquerade as a healthy protected session; verify how the supported-version check behaves under load failure.
-- [ ] Create a disposable, explicitly approved local Pi smoke fixture. Demonstrate rejection creates no sentinel and approval creates only the intended harmless sentinel; use timeouts and isolated temp directories.
-- [ ] Test clean Git installation through Pi with development dependencies omitted and normal Node runtime. Do not require a dev-only build tool in install hooks.
+- [x] Record source revisions and licenses; create the reuse ledger and necessary notices as material is copied.
+- [x] Add `package.json` named `pi-permissions`, explicit TypeScript extension entry, exact dependencies, Bun lockfile, strict TypeScript config, and a pinned development toolchain. No workspace catalogs, pnpm/Vitest requirement, or cross-checkout imports.
+- [x] Add `bun run check`, `bun test`, formatting/linting, and `bun run verify`. Tests use `bun:test`; type checking runs separately. Keep live tests out of default discovery/verification.
+- [x] Use Pi 1.5.2 development types. Follow host peer-package conventions without bundling Pi. Runtime code uses Node-compatible APIs; dev tooling may use Bun.
+- [x] Read Pi 1.5.2 extension/package docs and relevant examples/source. Establish the supported built-in bash path, current cwd, effective shell prefix/backend, hook mutation/order, provenance events, and cancellation behavior.
+- [x] Implement an active minimal bash-only gate: every covered call asks a human or blocks without a usable UI. Config/handler failures cannot unregister/bypass it. Leave all other tools unchanged.
+- [x] Show startup activation and supported runtime/mode status. Unsupported runtime must not masquerade as a healthy protected session; verify how the supported-version check behaves under load failure.
+- [x] Create a disposable, explicitly approved local Pi smoke fixture. Demonstrate rejection creates no sentinel and approval creates only the intended harmless sentinel; use timeouts and isolated temp directories.
+- [x] Test clean Git installation through Pi with development dependencies omitted and normal Node runtime. Do not require a dev-only build tool in install hooks.
 
-Exit checks:
+Exit checks: **all met** — evidence in [`docs/REUSE.md`](docs/REUSE.md) and [`docs/PI-PLATFORM.md`](docs/PI-PLATFORM.md); the Pi smoke asserts rejection leaves no sentinel and approval writes only the intended one.
 
 - Offline verify passes; the package has no hub runtime/dependency import.
 - A real Pi 1.5.2 rejected bash call does not execute; headless unresolved calls do not execute.
@@ -101,18 +114,20 @@ Exit checks: rules have documented matching limits; representative bypass fixtur
 
 Goal: faithfully integrate and compare the existing Decisions Model work without granting new authority by default.
 
-- [ ] Port client/state/aggregation tests selectively. Replace the Python fake endpoint with a TypeScript fixture supporting malformed data, delays, identity mismatch, and disconnects.
-- [ ] Implement configured endpoint with the working slashless path `http://jetson.lan:9931/v1/systemone`. Do not embed credentials or treat a LAN hostname as a trust guarantee.
-- [ ] Add an opt-in live contract test using synthetic benign text. The planning probe succeeded and returned `LiquidAI/d1-2B-GGUF:Q8_0`; the trailing-slash route returned 404. Reverify rather than asserting a permanently fixed server identity.
-- [ ] Distinguish the old judge's object-state contract from auto-mode's serialized-string-state candidates. Reproduce each candidate's exact representation, wording, criteria, polarity, and aggregation; pin/hash all relevant text.
-- [ ] Compare the old four-question min-rule and the auto-mode direct categorical baseline using existing labelled examples. Report unsafe approvals and uncertain-context approvals, not just average accuracy/coverage.
-- [ ] Select an explicit initial profile or keep multiple named experimental profiles if no defensible winner emerges. No automatic cross-model fallback. Do not transplant the Python veto as a mandatory runtime dependency.
-- [ ] Validate full responses: actual identity, keys, answer types, finite in-range readings, distribution sums/legends where relevant. Unknown profile or malformed response defers.
-- [ ] Bound state and total payload conservatively; keep the whole call or do not send it. Preserve masking; material information loss is review-required. Do not assume server capacity is discoverable via an undocumented route.
-- [ ] Implement `off`/`shadow`/`enforce` configuration but ship model authority as shadow until the next milestone. In shadow, log the proposal and show its reason while human decides.
-- [ ] Record effective decision separately from model proposal, with exact profile and response identity, latency, context omissions, and reason codes.
+- [x] Port client/state/aggregation tests selectively. Replace the Python fake endpoint with a TypeScript fixture supporting malformed data, delays, identity mismatch, and disconnects. **Done.** `scripts/fixtures/endpoint.ts` (TS, no Python) scripts behaviour per response: valid noul/choice bodies, malformed JSON, wrong identity, missing/extra keys, out-of-range readings, HTTP errors, delays, and mid-request disconnects. 30 client tests in `src/decisions/systemone.test.ts` assert each is named by a distinct reason code and never clamped or retried.
+- [x] Implement configured endpoint with the working slashless path `http://jetson.lan:9931/v1/systemone`. Do not embed credentials or treat a LAN hostname as a trust guarantee. **Done.** `endpointBase()` normalizes a configured origin to the slashless route (trailing-slash route verified 404 live). Credentials are an `Authorization` header from `MODEL_API_KEY` for scripts; a basic-auth URL is rejected outright. `http://` LAN origins are accepted and documented as carrying no trust: the endpoint is not authenticated, so its readings are treated as an unverified opinion.
+- [x] Add an opt-in live contract test using synthetic benign text. The planning probe succeeded and returned `LiquidAI/d1-2B-GGUF:Q8_0`; the trailing-slash route returned 404. Reverify rather than asserting a permanently fixed server identity. **Done.** `MODEL_BASE_URL=... bun run test:live` (`scripts/live-contract-check.ts`) runs the shipped judge over synthetic benign text and *reports* the served identity; it fails only when the endpoint answers as something other than the profile's pinned identity. Verified live 2026-11-14 against `http://jetson.lan:9931`: `LiquidAI/d1-2B-GGUF:Q8_0`, 4/4 keys, 213-278 ms, and the over-budget probe refused with `state_over_budget` instead of truncating.
+- [x] Distinguish the old judge's object-state contract from auto-mode's serialized-string-state candidates. Reproduce each candidate's exact representation, wording, criteria, polarity, and aggregation; pin/hash all relevant text. **Done.** `object-state-v1` (JSON object state, four `noul` questions, min-rule with a named exfiltration veto) and `string-state-v1` (serialized string state, one categorical question, argmax) are separate profile kinds with separate state builders. Question text, criteria wording, polarity (`high = safer` for the three min-rule dimensions, inverted for `exfiltration`), thresholds and aggregation are pinned in `src/decisions/profile.ts` + `questions.ts` and folded into `profileIdentity()`; `profile.test.ts` pins the identities, so a wording change changes the hash and invalidates comparisons.
+- [x] Compare the old four-question min-rule and the auto-mode direct categorical baseline using existing labelled examples. Report unsafe approvals and uncertain-context approvals, not just average accuracy/coverage. **Done, with a corpus substitution.** The reference corpora were not copied (see `docs/REUSE.md`), so `src/decisions/corpus.ts` holds 17 cases labelled in this repo, labelled as draft synthetic opinions rather than attributed review. `bun run evaluate` reports **unsafe approvals first**, then uncertain-context approvals, terminal denials, deferrals by reason, latency and per-case verdicts, and re-runs each profile to assert no drift. Live result 2026-11-14: conservative 0/0/0 approvals with 16 of 17 reaching a human; judge-band 1 approval, 9 denials; categorical 6 approvals. Drift: none for any profile.
+- [x] Select an explicit initial profile or keep multiple named experimental profiles if no defensible winner emerges. No automatic cross-model fallback. Do not transplant the Python veto as a mandatory runtime dependency. **Kept three named profiles; no winner selected.** 17 draft-labelled cases cannot separate them defensibly, and the reference projects' 90-95% figures were not reproducible here, so picking one would be aesthetics. The operator chooses explicitly; unknown ids switch the model off with the known ids listed, and no path falls back to another profile. The exfiltration veto is re-expressed as TypeScript arithmetic inside the min-rule, not a Python dependency.
+- [x] Validate full responses: actual identity, keys, answer types, finite in-range readings, distribution sums/legends where relevant. Unknown profile or malformed response defers. **Done.** Response validation is all-or-nothing: reported identity, exact key set, answer `type` per question, readings finite within `0..1` (never clamped), declared labels, distributions summing near 1. Unknown profile, `endpoint.model` mismatching the profile's pinned identity, and `mode: enforce` each switch the model off with a displayed reason and leave exact rules and review untouched.
+- [x] Bound state and total payload conservatively; keep the whole call or do not send it. Preserve masking; material information loss is review-required. Do not assume server capacity is discoverable via an undocumented route. **Done.** `maxPayloadTokens` (default 1024) bounds the whole request; on overflow the call becomes `defer (state_over_budget)` with the dropped fields recorded, so a command is never shown with its tail trimmed. Secret-shaped text (PEM, JWT, vendor keys, AWS ids, bearer tokens, credential assignments) is masked to `[masked:<shape>]` and documented as best-effort. No capacity probe: `num_ctx`/`/props` are not assumed, and the measured budget came from a real request that hit llama.cpp's own 2049-token error.
+- [x] Implement `off`/`shadow`/`enforce` configuration but ship model authority as shadow until the next milestone. In shadow, log the proposal and show its reason while human decides. **Done; authority not shipped.** `enforce` is schema-legal and refused: config stays valid, the model is off, and the message names M3. In shadow the review shows the proposal, its readings and its reason beside the deterministic why-review. The Pi smoke asserts the dangerous direction: a model `allow` with a human rejection leaves no sentinel, a model `deny` does not block a human approval, and an unavailable endpoint still reaches a human. `createShadowConsultant` returns `undefined` for `off`, so the consultant is structurally absent rather than checked at the call site.
+- [x] Record effective decision separately from model proposal, with exact profile and response identity, latency, context omissions, and reason codes. **Done.** `model` and `effective` are separate objects in each JSONL record: model side carries profile id, profile content identity, question text version, state kind, configured and served identity, proposal kind, readings/choices, aggregation, defer reason, latency, payload tokens and dropped fields; the record keeps `execution: "not_observed"` because nothing here observes execution. Off posture writes no `model` field at all.
 
-Exit checks: offline client/state/profile tests pass; a live smoke response is validated; no shadow model allow or deny authorizes/blocks in place of human review; state/profile changes invalidate comparisons rather than silently inheriting thresholds.
+Exit checks: offline client/state/profile tests pass; a live smoke response is validated; no shadow model allow or deny authorizes/blocks in place of human review; state/profile changes invalidate comparisons rather than silently inheriting thresholds. **All met** (315 offline tests; live contract check above; Pi smoke shadow scenarios; `profileIdentity` plus the `drift`/`comparable` guards in `src/decisions/compare.ts`).
+
+Not met by this milestone, and why: no held-out labelled corpus, no calibration, and no false-allow rate, so no profile is defensibly better than another and none is enabled by default. Enforcement, bounded concurrency, queue limits and the breaker remain M3.
 
 ## M3 - Dependable enforcement and failure behavior
 
@@ -166,7 +181,7 @@ bun install --frozen-lockfile
 bun run check
 bun test
 bun run verify               # offline: typecheck, lint/format, tests, schema consistency
-bun run test:integration     # opt-in synthetic requests to configured live endpoint
+MODEL_BASE_URL=http://host:port bun run test:live  # opt-in synthetic requests to configured live endpoint
 bun run test:pi              # opt-in disposable Pi 1.5.2 runtime/install smoke tests
 bun run evaluate            # text-only corpus evaluation, explicit profile/endpoint
 ```

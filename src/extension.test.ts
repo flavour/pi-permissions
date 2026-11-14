@@ -131,7 +131,7 @@ describe("extension registration and text-only host dispatch", () => {
     await h.emit("session_start");
     expect(h.statuses[0]).toContain("ACTIVE built-in bash gate");
     expect(h.statuses[0]).toContain("config missing");
-    expect(h.notices[0]).toContain("Models OFF");
+    expect(h.notices[0]).toContain("Model off.");
     expect((await h.emit("tool_call", bash()))?.block).toBe(true);
     expect(h.prompts).toHaveLength(1);
   });

@@ -5,12 +5,29 @@ import {
   isToolCallEventType,
   VERSION,
 } from "@earendil-works/pi-coding-agent";
+import { createShadowConsultant } from "./adapter.js";
 import { visible } from "./ask.js";
 import { loadConfig } from "./config.js";
 import { Handler } from "./handler.js";
 import { IntentTracker } from "./provenance.js";
 import { writeRecord } from "./records.js";
 import { snapshot } from "./request.js";
+
+/** Startup posture for the model, never implying any model authority. */
+function modelStatusText(config: {
+  model: {
+    state: string;
+    mode?: string;
+    profile?: string;
+    diagnostic?: string;
+  };
+}): string {
+  if (config.model.state === "ready")
+    return `Model ${config.model.mode} (profile ${config.model.profile}, proposals only: no model authority).`;
+  if (config.model.state === "invalid")
+    return `Model off: ${config.model.diagnostic ?? "invalid model configuration"}`;
+  return "Model off.";
+}
 
 /** Pi owns the final execution path. Later mutating extensions are outside this boundary. */
 export default function install(pi: ExtensionAPI): void {
@@ -29,7 +46,7 @@ export default function install(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     invalidate();
     const config = loadConfig(getAgentDir());
-    const message = `pi-permissions: ACTIVE built-in bash gate; Pi ${VERSION}; mode ${ctx.mode}; config ${config.status}. Models OFF. ${VERSION === "1.5.2" ? "" : "UNSUPPORTED runtime: bash blocked."}`;
+    const message = `pi-permissions: ACTIVE built-in bash gate; Pi ${VERSION}; mode ${ctx.mode}; config ${config.status}. ${modelStatusText(config)}. ${VERSION === "1.5.2" ? "" : "UNSUPPORTED runtime: bash blocked."}`;
     ctx.ui.setStatus("pi-permissions", message);
     if (ctx.hasUI)
       ctx.ui.notify(message, config.status === "invalid" ? "warning" : "info");
@@ -147,6 +164,13 @@ export default function install(pi: ExtensionAPI): void {
         signal,
         confirm: (title, message, options) =>
           ctx.ui.confirm(title, message, options),
+        model: createShadowConsultant(config.model, {
+          getBranch: () => {
+            const model = (ctx as { model?: { info?: { branch?: string } } })
+              .model;
+            return model?.info?.branch;
+          },
+        }),
         record: (record) => {
           if (config.config.records !== false)
             writeRecord(getAgentDir(), record);

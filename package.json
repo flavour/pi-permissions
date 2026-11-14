@@ -33,7 +33,7 @@
     "format": "biome check --write .",
     "verify": "bun run check && bun run lint && bun test",
     "test:pi": "bun scripts/pi-smoke.ts",
-    "test:integration": "echo 'opt-in: configure endpoint, then run a synthetic request against the live Decisions Model client'",
-    "evaluate": "echo 'opt-in: run a text-only corpus evaluation against a configured profile/endpoint'"
+    "evaluate": "bun scripts/compare-profiles.ts",
+    "test:live": "bun scripts/live-contract-check.ts"
   }
 }

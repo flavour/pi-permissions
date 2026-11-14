@@ -1,6 +1,10 @@
 # pi-permissions
 
-Standalone **Pi 1.5.2** built-in bash gate: global exact rules followed by one-shot human review. No hub dependency, model requests, or Bun runtime dependency. This is the conservative M1 implementation; model/shadow support is **not yet implemented**.
+Standalone **Pi 1.5.2** built-in bash gate: global exact rules followed by one-shot
+human review. No hub dependency and no Bun runtime dependency. An optional
+**shadow** Decisions Model can annotate a review with a proposal; it has **no
+authority** — a model `allow` never runs a command and a model `deny` never blocks
+one. See [`docs/M2-MODEL.md`](docs/M2-MODEL.md).
 
 ## Install and verify activation
 
@@ -63,7 +67,9 @@ bun install --frozen-lockfile
 bun run check
 bun test
 bun run verify
-bun run test:pi --consent  # opt-in disposable Git install + real Node/Pi SDK smoke
+bun run test:pi --consent           # opt-in disposable Git install + real Node/Pi SDK smoke
+bun run evaluate                     # profile comparison over labelled cases (fake endpoint)
+MODEL_BASE_URL=http://host:port bun run test:live   # opt-in endpoint contract check
 ```
 
-Offline tests classify candidate text only, never execute corpus commands. The opt-in smoke uses automated UI adapters and only an isolated harmless sentinel operation; it is not proof of physical human confirmation or a top-level provider loop. See [`docs/PI-PLATFORM.md`](docs/PI-PLATFORM.md) for exact isolation, tested paths and gaps, and [`PLAN.md`](PLAN.md) for remaining milestones. Live-model integration/evaluation commands remain placeholders until M2.
+Offline tests classify candidate text only, never execute corpus commands. The opt-in smoke uses automated UI adapters and only an isolated harmless sentinel operation; it is not proof of physical human confirmation or a top-level provider loop. Its model scenarios talk only to a `127.0.0.1` fixture, and every other socket is blocked. See [`docs/PI-PLATFORM.md`](docs/PI-PLATFORM.md) for exact isolation, tested paths and gaps, and [`PLAN.md`](PLAN.md) for remaining milestones.

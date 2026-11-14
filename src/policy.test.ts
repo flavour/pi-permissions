@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import {
   EMPTY_CONFIG,
   type LoadedConfig,
+  MODEL_OFF,
   type PolicyConfig,
 } from "./config.js";
 import { evaluatePolicy, MAX_ANALYZED_COMMAND_LENGTH } from "./policy.js";
@@ -26,7 +27,7 @@ function loaded(
   config: PolicyConfig = EMPTY_CONFIG,
   status: LoadedConfig["status"] = "valid",
 ): LoadedConfig {
-  return { config, status, revision: "test-revision" };
+  return { config, status, revision: "test-revision", model: MODEL_OFF };
 }
 function whitelist(exact: string, cwd?: string): LoadedConfig {
   return loaded({

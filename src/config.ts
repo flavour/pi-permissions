@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { getProfile } from "./decisions/profile.js";
 
 export const EXTENSION_ID = "pi-permissions";
 
@@ -16,6 +17,31 @@ export interface PolicyConfig {
   readonly whitelist: readonly ExactRule[];
   readonly blacklist: readonly ExactRule[];
   readonly records?: boolean;
+  readonly model?: ModelConfig;
+}
+
+export type ModelMode = "off" | "shadow" | "enforce";
+
+export interface ModelConfig {
+  readonly mode: ModelMode;
+  /** A named profile from `decisions/profile.ts`; never a free-form prompt. */
+  readonly profile: string;
+  readonly endpoint: {
+    readonly baseUrl: string;
+    readonly model: string;
+    readonly timeoutMs: number;
+  };
+  readonly maxPayloadTokens: number;
+}
+
+/** Resolved model posture. `invalid` means the model is off and the reason is shown. */
+export interface ModelStatus {
+  readonly state: "off" | "ready" | "invalid";
+  readonly mode?: ModelMode;
+  readonly profile?: string;
+  readonly config?: ModelConfig;
+  /** Safe to display: never echoes the supplied value. */
+  readonly diagnostic?: string;
 }
 
 export interface LoadedConfig {
@@ -23,6 +49,8 @@ export interface LoadedConfig {
   readonly status: "missing" | "valid" | "invalid";
   /** Content identity, not an mtime or a claim about execution. */
   readonly revision: string;
+  /** Model posture for this exact snapshot, derived from the validated block. */
+  readonly model: ModelStatus;
   /** Safe to display: never includes config contents or OS error messages. */
   readonly diagnostic?: string;
 }
@@ -31,12 +59,39 @@ type Schema = Readonly<{
   type: "object" | "array" | "string" | "boolean" | "integer";
   const?: number;
   minLength?: number;
+  maxLength?: number;
   pattern?: string;
+  minimum?: number;
+  maximum?: number;
   properties?: Readonly<Record<string, Schema>>;
   required?: readonly string[];
   additionalProperties?: false;
   items?: Schema;
 }>;
+
+/** M2 model block. `enforce` is schema-legal but refused until M3. */
+const modelSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["mode", "profile", "endpoint"],
+  properties: {
+    mode: { type: "string", pattern: "^(off|shadow|enforce)$" },
+    profile: { type: "string", minLength: 1, maxLength: 80 },
+    maxPayloadTokens: { type: "integer", minimum: 64, maximum: 8192 },
+    endpoint: {
+      type: "object",
+      additionalProperties: false,
+      required: ["baseUrl", "model"],
+      properties: {
+        // Absolute http(s) origin only: no path, query, fragment or userinfo.
+        // Credentials in a URL are rejected outright, and a LAN host is not trust.
+        baseUrl: { type: "string", pattern: "^https?://[^\\s/?#@]+$" },
+        model: { type: "string", minLength: 1, maxLength: 200 },
+        timeoutMs: { type: "integer", minimum: 100, maximum: 30000 },
+      },
+    },
+  },
+} as const satisfies Schema;
 
 const ruleSchema = {
   type: "object",
@@ -69,6 +124,7 @@ export const configSchema = {
     whitelist: { type: "array", items: ruleSchema },
     blacklist: { type: "array", items: ruleSchema },
     records: { type: "boolean" },
+    model: modelSchema,
   },
 } as const;
 
@@ -111,7 +167,9 @@ function conforms(value: unknown, schema: Schema): boolean {
     case "integer":
       return (
         Number.isInteger(value) &&
-        (schema.const === undefined || value === schema.const)
+        (schema.const === undefined || value === schema.const) &&
+        (schema.minimum === undefined || (value as number) >= schema.minimum) &&
+        (schema.maximum === undefined || (value as number) <= schema.maximum)
       );
   }
 }
@@ -121,6 +179,74 @@ export const EMPTY_CONFIG: PolicyConfig = Object.freeze({
   whitelist: Object.freeze([]),
   blacklist: Object.freeze([]),
 });
+
+export const MODEL_OFF: ModelStatus = Object.freeze({ state: "off" });
+
+export const DEFAULT_MODEL_TIMEOUT_MS = 1500;
+export const DEFAULT_MAX_PAYLOAD_TOKENS = 1024;
+
+/**
+ * Turn a schema-valid model block into a posture. Schema shape is already
+ * checked here; this enforces the things JSON Schema cannot: the profile must
+ * exist, the configured served identity must equal the profile's pinned
+ * identity, and `enforce` is unavailable until model enforcement is hardened.
+ * A rejected block switches the model off; it never disables deterministic
+ * policy and never silently inherits another profile's calibration.
+ */
+function resolveModel(value: unknown): ModelStatus {
+  if (!record(value)) return MODEL_OFF;
+  const mode = value.mode as ModelMode;
+  if (mode === "off") return MODEL_OFF;
+  const endpoint = record(value.endpoint) ? value.endpoint : undefined;
+  if (!endpoint) return MODEL_OFF;
+  const config: ModelConfig = Object.freeze({
+    mode,
+    profile: String(value.profile),
+    endpoint: Object.freeze({
+      baseUrl: String(endpoint.baseUrl),
+      model: String(endpoint.model),
+      timeoutMs:
+        typeof endpoint.timeoutMs === "number"
+          ? endpoint.timeoutMs
+          : DEFAULT_MODEL_TIMEOUT_MS,
+    }),
+    maxPayloadTokens:
+      typeof value.maxPayloadTokens === "number"
+        ? value.maxPayloadTokens
+        : DEFAULT_MAX_PAYLOAD_TOKENS,
+  });
+  if (mode === "enforce")
+    return Object.freeze({
+      state: "invalid",
+      mode,
+      profile: config.profile,
+      diagnostic:
+        'model mode "enforce" is unavailable until model enforcement is built and verified (M3); the model is off. Set mode "shadow" to see proposals without authority.',
+    });
+  const profile = getProfile(config.profile);
+  if (!profile)
+    return Object.freeze({
+      state: "invalid",
+      mode,
+      profile: config.profile,
+      diagnostic:
+        "unknown model profile; the model is off. Use one of the documented profile IDs.",
+    });
+  if (profile.model !== config.endpoint.model)
+    return Object.freeze({
+      state: "invalid",
+      mode,
+      profile: config.profile,
+      diagnostic:
+        "model.endpoint.model does not match the profile's pinned model identity; the model is off.",
+    });
+  return Object.freeze({
+    state: "ready",
+    mode,
+    profile: config.profile,
+    config,
+  });
+}
 
 function freezeConfig(config: PolicyConfig): PolicyConfig {
   for (const rule of [...config.whitelist, ...config.blacklist])
@@ -149,6 +275,7 @@ export function loadConfig(agentDir: string): LoadedConfig {
       config: EMPTY_CONFIG,
       status,
       revision: revision(status, ""),
+      model: MODEL_OFF,
       ...(missing
         ? {}
         : {
@@ -171,12 +298,14 @@ export function loadConfig(agentDir: string): LoadedConfig {
       config: freezeConfig(config),
       status: "valid",
       revision: revision("valid", contents),
+      model: resolveModel(config.model),
     });
   } catch {
     return Object.freeze({
       config: EMPTY_CONFIG,
       status: "invalid",
       revision: revision("invalid", contents),
+      model: MODEL_OFF,
       diagnostic:
         "Invalid global pi-permissions config: use version 1 exact rules with unique IDs; automatic approval is disabled.",
     });

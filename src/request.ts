@@ -22,6 +22,34 @@ export interface Assessment {
   readonly ruleId?: string;
 }
 
+/**
+ * What the Decisions Model proposed, recorded separately from what the gate
+ * did. `authority` is `none` while model authority is shadow: no code path turns
+ * a shadow proposal into an allow or a block.
+ */
+export interface ModelAssessment {
+  readonly kind: "allow" | "deny" | "defer";
+  readonly mode: "off" | "shadow" | "enforce";
+  readonly authority: "none";
+  readonly reasonCode: string;
+  /** One display-safe sentence: no endpoint bodies, no credentials. */
+  readonly explanation: string;
+  readonly profileId?: string;
+  /** Content hash of the whole profile: text, model, band, state and rule. */
+  readonly profileIdentity?: string;
+  readonly questionsTextVersion?: string;
+  readonly stateKind?: string;
+  readonly aggregation?: string;
+  readonly requestedModel?: string;
+  /** Only present when the endpoint's reported identity was verified equal. */
+  readonly servedModel?: string;
+  readonly latencyMs?: number;
+  /** Context the payload ladder had to omit; empty means nothing was lost. */
+  readonly dropped?: readonly string[];
+  readonly readings?: Readonly<Record<string, number>>;
+  readonly choices?: Readonly<Record<string, string>>;
+}
+
 export function snapshot(request: BashRequest): BashRequest {
   return Object.freeze({
     ...request,

@@ -64,6 +64,48 @@
     },
     "records": {
       "type": "boolean"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "profile", "endpoint"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "pattern": "^(off|shadow|enforce)$"
+        },
+        "profile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "maxPayloadTokens": {
+          "type": "integer",
+          "minimum": 64,
+          "maximum": 8192
+        },
+        "endpoint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["baseUrl", "model"],
+          "properties": {
+            "baseUrl": {
+              "type": "string",
+              "pattern": "^https?://[^\\s/?#@]+$"
+            },
+            "model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "timeoutMs": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 30000
+            }
+          }
+        }
+      }
     }
   }
 }

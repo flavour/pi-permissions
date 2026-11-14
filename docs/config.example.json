@@ -15,5 +15,15 @@
       "reason": "Run this exact push manually after review. Other spellings are not covered by this rule."
     }
   ],
-  "records": false
+  "records": false,
+  "model": {
+    "mode": "shadow",
+    "profile": "minrule-4q-conservative",
+    "maxPayloadTokens": 1024,
+    "endpoint": {
+      "baseUrl": "http://jetson.lan:9931",
+      "model": "LiquidAI/d1-2B-GGUF:Q8_0",
+      "timeoutMs": 1500
+    }
+  }
 }

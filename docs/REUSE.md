@@ -58,6 +58,38 @@ The reported `d1-trace-choice-flat-v3` plus `syntax-review-veto-v2` result is 27
 
 ## M0: independent minimal adapter, deferred selective reuse
 
+**Update 2026-11-14 (M2).** The M2 shadow model was implemented as a clean-room
+reimplementation from specification, not by copying. Nothing from either source tree
+was pasted into `src/`. What was taken is *behavioural specification*, read from the
+sources and then written here in this package's own shapes, and what was deliberately
+not taken is listed below so the gap is auditable rather than inferred. The license and
+revision gaps recorded above are unresolved, which is precisely why no bytes were
+copied: an unresolved notice is a reason to reimplement, not a reason to copy and hope.
+
+| This package | Specification taken from | What differs |
+| --- | --- | --- |
+| `src/decisions/profile.ts`, `questions.ts` | The judge's four-question `noul` design and the auto-mode candidate's serialized-string single categorical question | Question text, criteria wording and thresholds were authored here to express the same decisions; each profile is content-hashed by `profileIdentity()` so any change invalidates prior comparisons. No upstream profile JSON or prompt file was read into these files byte-for-byte. |
+| `src/decisions/aggregate.ts` | Min-rule-with-named-veto aggregation; argmax with an unsafe-mass cap | Written against this package's own types. The veto threshold and the "unsure reading defers" rule are explicit constants with tests, not inherited magic numbers. |
+| `src/decisions/systemone.ts` | The `/v1/systemone` request/response shape | Independent client. Adds identity pinning, all-or-nothing validation, and distinct reason codes per failure class; never clamps an out-of-range reading. |
+| `src/decisions/state.ts` | Object-state versus serialized-string state, and the observation that state size dominates latency | Independent builder with a total-payload token budget that refuses (`state_over_budget`) instead of truncating. The reference's truncation is a documented counterexample, not a behaviour copied. |
+| `scripts/fixtures/endpoint.ts` | The need for a controllable endpoint double | Written in TypeScript for Bun, replacing the Python double. No Python is required to test this package. |
+| `src/decisions/corpus.ts` | Nothing | **17 cases authored in this repo.** The upstream labelled corpora were **not** copied: their rights status is unresolved and their labels could not be attributed. Their labels here are draft synthetic opinions and are described that way wherever they are reported. |
+
+Deliberately **not** adopted, after inspection: the reference projects' state
+truncation (silently changes the command under review), per-attempt retry on a slow
+endpoint (multiplies latency against a 60 s review deadline without improving the
+decision), and selecting a profile by approval rate alone (the counterexample that
+matters is a profile with a high approval rate that also approves dangerous calls,
+which is why `compare.ts` reports unsafe approvals first and refuses to call two
+runs comparable when corpus, profile identity or served model moved).
+
+Verification for this milestone: `bun run verify` (315 offline tests),
+`bun run evaluate` (comparison mechanics against a scripted fake endpoint), and the
+opt-in live checks recorded in `docs/M2-MODEL.md`. None of these establish decision
+quality; they establish that the client honours its stated contract.
+
+## Original M0 scope statement
+
 M0 should independently implement the smallest Pi 1.5.2 bash-only human gate. This is limited independence at the host adapter seam, not a decision to rewrite the existing model/state machinery from scratch. It does not supersede the selective-reuse direction in `PLAN.md`.
 
 - Register the covered `tool_call` path without hub readiness, a service locator, or an authorizer chain. Missing/invalid configuration must not unregister it.

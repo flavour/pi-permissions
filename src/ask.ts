@@ -1,4 +1,9 @@
-import { type Assessment, type BashRequest, denied } from "./request.js";
+import {
+  type Assessment,
+  type BashRequest,
+  denied,
+  type ModelAssessment,
+} from "./request.js";
 
 /** Escape controls/bidi characters visibly, without altering the decision snapshot. */
 export function visible(text: string): string {
@@ -7,10 +12,27 @@ export function visible(text: string): string {
   );
 }
 
+/**
+ * A shadow proposal line for the reviewer. The model's wording is operator- or
+ * profile-derived text, so it is escaped exactly like the command: a proposal
+ * can inform the human, never instruct the terminal.
+ */
+export function modelProposalLines(model: ModelAssessment): string[] {
+  const profile = model.profileId ? ` [profile ${model.profileId}]` : "";
+  return [
+    `Decisions model proposal (${model.mode}, no authority): ${model.kind}${profile} — ${visible(
+      model.explanation,
+    )}`,
+    "The model cannot approve or block this call. Your decision is the decision.",
+  ];
+}
+
 export function buildHumanPrompt(
   request: BashRequest,
   why: Assessment,
+  model?: ModelAssessment,
 ): string {
+  const modelLines = model ? modelProposalLines(model) : [];
   return [
     "Approve once or reject this entire invocation. Controls are visually escaped.",
     `Request: ${visible(request.requestId)}`,
@@ -22,6 +44,7 @@ export function buildHumanPrompt(
     `Raw interactive intent (context, not authority): ${visible(request.userIntent ?? "UNKNOWN — no associated raw interactive input")}`,
     `Shell prefix: ${visible(request.executionContext.prefix || "(none)")}`,
     `Configured shell: ${visible(request.executionContext.shellPath ?? "host default (not attested)")}`,
+    ...modelLines,
     "Execution unknowns: shell startup files, functions, executable resolution, backend/spawn hooks, mutable files and later extensions are not attested.",
     "Approve only if this exact invocation is intended. Reject if unsure.",
   ].join("\n\n");
@@ -47,6 +70,7 @@ export class HumanReviewer {
     why: Assessment,
     confirm: Confirm,
     signal?: AbortSignal,
+    model?: ModelAssessment,
   ): Promise<Assessment> {
     if (this.pending >= 16)
       return denied(
@@ -91,7 +115,7 @@ export class HumanReviewer {
       const approved = await Promise.race([
         confirm(
           "pi-permissions: approve once?",
-          buildHumanPrompt(request, why),
+          buildHumanPrompt(request, why, model),
           { signal: controller.signal, timeout: this.timeout },
         ),
         cancelled,
