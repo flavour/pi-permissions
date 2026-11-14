@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "whitelist": [
+    {
+      "id": "inspect-this-repo",
+      "exact": "git status --short",
+      "cwd": "/home/example/projects/example",
+      "reason": "I explicitly trust this invocation, its Git configuration and executable resolution in this directory."
+    }
+  ],
+  "blacklist": [
+    {
+      "id": "push-main-manually",
+      "exact": "git push origin main",
+      "reason": "Run this exact push manually after review. Other spellings are not covered by this rule."
+    }
+  ],
+  "records": false
+}

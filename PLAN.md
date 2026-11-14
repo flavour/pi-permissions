@@ -1,6 +1,6 @@
 # pi-permissions Implementation Plan
 
-Status: M0 complete, 2026-11-14. A standalone, independently installable `pi-permissions` package and a verified bash-only human gate now exist in this repository. The gate is human-only (no model/policy/config shortcut), refuses non-interactive and non-chat contexts loudly, and asks a human to approve top-level interactive bash calls. M1 (deterministic policy and human review) is the next milestone.
+Status: M0 complete; M1 conservative core implemented and verified, 2026-11-14. Global blacklist-first exact rules, immutable snapshots, provenance-qualified intent/unknowns, serialized one-shot review, cancellation, and private bounded decision records now ship. Missing/invalid config leaves the gate active. Model work remains M2. M1 is not marked fully complete: built-in automatic easy-safe presets are deliberately deferred because shell/executable identity cannot be established; only explicit exact whitelists bypass human review. See `docs/M1-VERIFICATION.md`, `docs/M1-POLICY.md`, and `README.md` for evidence and limits.
 
 ## Working approach
 
@@ -72,15 +72,16 @@ Exit checks:
 
 Goal: an independently useful human-backed gate with simple global rules and meaningful explanations.
 
-- [ ] Introduce immutable request snapshots and structured assessments/reason codes. Separate policy evaluation, orchestration, review, and Pi adapter.
-- [ ] Load only `<agentDir>/extensions/pi-permissions/config.json`. Missing config leaves the gate active; invalid config yields visible safe operation, never silent non-registration. Ignore project-local policy files.
-- [ ] Implement blacklist-first exact rules and optional cwd restrictions, plus stable rule IDs/reasons. Provide small whitelist/blacklist examples and configuration validation tests.
-- [ ] Evaluate parser/analyzer choices using both source projects. Record the smallest supported grammar and unsupported constructs. Add `argvPrefix` rules only once full-call recognition is tested; reject unsupported matcher config rather than accepting it loosely.
-- [ ] Add a few conservative built-in easy-safe forms and review-required floors. Unsupported syntax/hidden execution context cannot inherit a safe prefix. Do not label arbitrary executable prefixes read-only.
-- [ ] Capture raw input provenance and associate intent with the actual run; do not treat processed extension/assistant text as human authority. Test steering/queued input, session switch, and missing intent.
-- [ ] Build review showing the full command, cwd, user intent/unknowns, and a concrete **why review** sentence. Approve once/reject only; safe dismissal and abort behavior.
-- [ ] Return understandable policy/human denial reasons to the agent, without endpoint bodies/secrets, including no-evasion guidance.
-- [ ] Add basic structured decision records early, distinguishing decision from execution. Keep raw records user-private and outside Git.
+- [x] Introduce immutable request snapshots and structured assessments/reason codes. Separate policy evaluation, orchestration, review, and Pi adapter.
+- [x] Load only `<agentDir>/extensions/pi-permissions/config.json`. Missing config leaves the gate active; invalid config yields visible safe operation, never silent non-registration. Ignore project-local policy files.
+- [x] Implement blacklist-first exact rules and optional cwd restrictions, plus stable rule IDs/reasons. Provide small whitelist/blacklist examples and configuration validation tests.
+- [x] Evaluate parser/analyzer choices using both source projects. Record the smallest supported grammar and unsupported constructs. Add `argvPrefix` rules only once full-call recognition is tested; reject unsupported matcher config rather than accepting it loosely. (`argvPrefix` is rejected in M1.)
+- [ ] Add a few conservative built-in easy-safe forms. **Deferred by explicit design decision:** no built-in automatic grants until a defensible shell/executable-context assumption is established; see `docs/M1-POLICY.md`.
+- [x] Add review-required floors. Unsupported syntax/hidden execution context cannot inherit a safe prefix. Do not label arbitrary executable prefixes read-only.
+- [x] Capture input provenance and conditionally associate idle interactive intent with the actual run; do not treat processed extension/assistant text as human authority. Test steering/queued input, prompt expansion, session switch, and missing intent. Public API lacks durable input IDs; ambiguous cases stay unknown and audited input-handler ordering is required.
+- [x] Build review showing the full command, cwd, user intent/unknowns, and a concrete **why review** sentence. Approve once/reject only; safe dismissal and abort behavior.
+- [x] Return understandable policy/human denial reasons to the agent, without endpoint bodies/secrets, including no-evasion guidance.
+- [x] Add basic structured decision records early, distinguishing decision from execution. Keep raw records user-private and outside Git. Early unsupported runtime/tool and exceptional failures return denial without a full record (documented).
 
 Required policy/review test matrix:
 

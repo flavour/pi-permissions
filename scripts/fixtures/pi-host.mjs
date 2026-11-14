@@ -121,6 +121,9 @@ async function run(
       mode === "tui" || mode === "rpc"
         ? new Proxy(
             {
+              // SDK copies enumerable UI members; a Proxy fallback alone is insufficient.
+              setStatus: () => {},
+              notify: () => {},
               confirm: async (title, message, options) => {
                 confirms++;
                 assert.equal(options?.timeout, 60000);
@@ -181,8 +184,12 @@ async function run(
       if (name === "rejected" || name === "ui-error" || cancel || hookError)
         assert.equal(confirms, 1);
       if (hookError)
-        assert(errors.length > 0, "throwing hook must be reported");
+        assert(
+          JSON.stringify(result).includes("automated hook failure"),
+          "throwing hook must be reported in the tool error",
+        );
     }
+    assert.equal(errors.length, 0, "no unexpected extension lifecycle errors");
     console.log(
       JSON.stringify({
         name,
@@ -191,6 +198,7 @@ async function run(
         confirms,
         events,
         hookErrors: errors.length,
+        hookErrorMessages: errors.map((error) => error.error ?? error.message),
         loadErrors: loaded.errors.length,
         isError: result.isError ?? false,
       }),

@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pi-permissions M1 global policy",
+  "$comment": "Rule IDs must additionally be unique across both lists (runtime check).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "whitelist", "blacklist"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1
+    },
+    "whitelist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "exact"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+          },
+          "exact": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "pattern": "^/[^\\u0000]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "blacklist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "exact"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*(?![\\s\\S])"
+          },
+          "exact": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "pattern": "^/[^\\u0000]*$"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "records": {
+      "type": "boolean"
+    }
+  }
+}

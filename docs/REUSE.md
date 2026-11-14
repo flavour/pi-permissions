@@ -6,6 +6,12 @@ This records the M0 source-revision/license prerequisite from `PLAN.md`, not com
 
 Paths beginning with `~/` refer to `/home/fran/` in the inspected environment. Local file hashes below identify inspected auto-mode bytes where a Git revision cannot be recovered; they are not substitutes for a source commit or license grant.
 
+## M1 continuation (2026-11-14)
+
+M1 implementation/source-comparison evidence is recorded in [`M1-POLICY.md`](M1-POLICY.md), with verification and changed assumptions in [`M1-VERIFICATION.md`](M1-VERIFICATION.md). Judge floor/config and selected hub analyzer/metamorphic/effect sources were inspected read-only. The implementation and fixture matrix are independently written; no upstream code, prompts, profiles or corpus rows were adopted. License gaps recorded below remain unresolved and no blanket clearance is claimed. Pi 1.5.2 extension/package docs and permission-gate/timed-confirm examples were read in full, with input/event/dialog implementation inspected for the adapter contract. Its lack of durable queued-input identity is an explicit limitation, not a reason to trust latest processed user-role text.
+
+The remainder of this ledger is the historical M0 inspection record.
+
 ## Source identities and license findings
 
 | Source | Revision and checkout evidence | License evidence | Reuse status |
