@@ -3,15 +3,21 @@
  *
  * The rules under test are the ones that keep a misconfiguration from becoming
  * either a silent loss of protection or an unintended grant of authority:
- * a rejected model block switches the model off and says why, `enforce` is not
- * available, and a profile's calibration cannot be borrowed by another profile.
+ * a rejected model block switches the model off and says why, `enforce` grants
+ * authority only against an explicit acknowledgement, and a profile's
+ * calibration cannot be borrowed by another profile.
  */
 
 import { describe, expect, it, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, MODEL_OFF } from "./config.js";
+import {
+  ENFORCE_ACKNOWLEDGEMENT,
+  loadConfig,
+  MODEL_OFF,
+  OPERATIONAL_DEFAULTS,
+} from "./config.js";
 import { PROFILES } from "./decisions/profile.js";
 
 function directory() {
@@ -66,14 +72,113 @@ describe("model configuration posture", () => {
     expect(loaded.model.config?.endpoint.timeoutMs).toBe(1500);
   });
 
-  it("enforce is refused: authority is not available from configuration alone", () => {
+  it("enforce without the acknowledgement stays off and keeps the gate intact", () => {
     const agent = directory();
     put(agent, withModel({ ...shadow, mode: "enforce" }));
     const loaded = loadConfig(agent);
     expect(loaded.status).toBe("valid");
     expect(loaded.model.state).toBe("invalid");
     expect(loaded.model.config).toBeUndefined();
-    expect(loaded.model.diagnostic).toContain("unavailable");
+    expect(loaded.model.diagnostic).toContain("enforceAcknowledgement");
+    // Losing the model must not lose the deterministic gate.
+    expect(loaded.config.version).toBe(1);
+  });
+
+  it("enforce with the exact acknowledgement is ready and carries its bounds", () => {
+    const agent = directory();
+    put(
+      agent,
+      withModel({
+        ...shadow,
+        mode: "enforce",
+        enforceAcknowledgement: ENFORCE_ACKNOWLEDGEMENT,
+      }),
+    );
+    const loaded = loadConfig(agent);
+    expect(loaded.model.state).toBe("ready");
+    expect(loaded.model.mode).toBe("enforce");
+    expect(loaded.model.acknowledgement).toBe(ENFORCE_ACKNOWLEDGEMENT);
+    expect(loaded.model.config?.operational).toEqual(OPERATIONAL_DEFAULTS);
+  });
+
+  it("an acknowledgement that is merely similar grants nothing", () => {
+    const agent = directory();
+    put(
+      agent,
+      withModel({
+        ...shadow,
+        mode: "enforce",
+        enforceAcknowledgement: "i understand this profile is provisional",
+      }),
+    );
+    expect(loadConfig(agent).model.state).toBe("invalid");
+  });
+
+  it("enforce is off rather than borrowing a mismatched endpoint identity", () => {
+    const agent = directory();
+    put(
+      agent,
+      withModel({
+        ...shadow,
+        mode: "enforce",
+        enforceAcknowledgement: ENFORCE_ACKNOWLEDGEMENT,
+        endpoint: { ...shadow.endpoint, model: "Someone/Else:latest" },
+      }),
+    );
+    const loaded = loadConfig(agent);
+    expect(loaded.model.state).toBe("invalid");
+    expect(loaded.model.diagnostic).toContain("pinned model identity");
+  });
+
+  it("enforce requires a bounded request rather than an unbounded one", () => {
+    const agent = directory();
+    put(
+      agent,
+      withModel({
+        ...shadow,
+        mode: "enforce",
+        enforceAcknowledgement: ENFORCE_ACKNOWLEDGEMENT,
+        maxPayloadTokens: 4096,
+      }),
+    );
+    const loaded = loadConfig(agent);
+    expect(loaded.model.state).toBe("invalid");
+    expect(loaded.model.diagnostic).toContain("bounded request");
+  });
+
+  it("operational bounds resolve from config and cannot approve anything", () => {
+    const agent = directory();
+    put(
+      agent,
+      withModel({
+        ...shadow,
+        operational: {
+          concurrency: 2,
+          maxQueue: 0,
+          maxWaitMs: 100,
+          breakerFailures: 5,
+          breakerCooldownMs: 30000,
+          dedupe: true,
+        },
+      }),
+    );
+    const config = loadConfig(agent).model.config;
+    expect(config?.operational).toEqual({
+      concurrency: 2,
+      maxQueue: 0,
+      maxWaitMs: 100,
+      breakerFailures: 5,
+      breakerCooldownMs: 30000,
+      dedupe: true,
+    });
+  });
+
+  it("an out-of-range operational bound invalidates the config instead of clamping", () => {
+    const agent = directory();
+    put(agent, withModel({ ...shadow, operational: { concurrency: 0 } }));
+    expect(loadConfig(agent).status).toBe("invalid");
+    put(agent, withModel({ ...shadow, operational: { dedupe: "yes" } }));
+    expect(loadConfig(agent).status).toBe("invalid");
   });
 
   it("an unknown profile switches the model off without disabling deterministic policy", () => {

@@ -14,6 +14,7 @@ import {
   type LoadedConfig,
   MODEL_OFF,
   type ModelStatus,
+  OPERATIONAL_DEFAULTS,
   type PolicyConfig,
 } from "./config.js";
 import { type DecisionRecord, Handler } from "./handler.js";
@@ -62,6 +63,7 @@ function shadowReady(profile = "minrule-4q-conservative"): ModelStatus {
         timeoutMs: 1000,
       },
       maxPayloadTokens: 1024,
+      operational: OPERATIONAL_DEFAULTS,
     },
   };
 }

@@ -300,7 +300,9 @@ test("choice answers are validated against the declared labels and sum to one", 
   }
 });
 
-test("a transport that throws a plain error is still a typed failure", async () => {
+test("a transport that throws a plain error is not invented into an endpoint reason", async () => {
+  // `unknown`, not `parse`: an unexpected internal throw must not be dressed up
+  // as a protocol diagnosis that a caller would then trust (and count).
   const error = await askSystemOne({
     baseUrl: "http://127.0.0.1:1",
     path: minrule.endpointPath,
@@ -312,7 +314,44 @@ test("a transport that throws a plain error is still a typed failure", async () 
       throw new Error("socket exploded");
     },
   }).catch((cause: unknown) => cause);
-  expect((error as EndpointError).kind).toBe("parse");
+  expect((error as EndpointError).kind).toBe("unknown");
+});
+
+test("caller cancellation is its own failure kind, never a timeout or a parse", async () => {
+  const server = await endpoint({ kind: "delay", ms: 5_000 });
+  const controller = new AbortController();
+  const pending = askSystemOne({
+    baseUrl: server.url,
+    path: minrule.endpointPath,
+    profile: minrule,
+    state: {},
+    questions: minrule.questions,
+    timeoutMs: 10_000,
+    signal: controller.signal,
+  });
+  setTimeout(() => controller.abort(), 20);
+  const error = await pending.catch((cause: unknown) => cause);
+  expect((error as EndpointError).kind).toBe("cancelled");
+});
+
+test("a transport that ignores cancellation cannot deliver to an aborted caller", async () => {
+  const error = await askSystemOne({
+    baseUrl: "http://127.0.0.1:1",
+    path: minrule.endpointPath,
+    profile: minrule,
+    state: {},
+    questions: minrule.questions,
+    timeoutMs: 10_000,
+    signal: AbortSignal.abort(),
+    transport: async () =>
+      noulResponse({
+        authorized: 0.9,
+        reversible: 0.9,
+        blast_radius: 0.9,
+        exfiltration: 0.1,
+      }),
+  }).catch((cause: unknown) => cause);
+  expect((error as EndpointError).kind).toBe("cancelled");
 });
 
 test("latency is measured by the supplied clock, not by wall-clock guessing", async () => {

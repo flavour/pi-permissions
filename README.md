@@ -2,9 +2,12 @@
 
 Standalone **Pi 1.5.2** built-in bash gate: global exact rules followed by one-shot
 human review. No hub dependency and no Bun runtime dependency. An optional
-**shadow** Decisions Model can annotate a review with a proposal; it has **no
-authority** — a model `allow` never runs a command and a model `deny` never blocks
-one. See [`docs/M2-MODEL.md`](docs/M2-MODEL.md).
+**Decisions Model** can annotate a review with a proposal. In `shadow` (the
+default) it has **no authority** — a model `allow` never runs a command and a model
+`deny` never blocks one. In `enforce` a model `deny` **is terminal**, while a model
+`allow` still requires you: **no mode lets a model approve silently, and no
+profile is `operational`.** See [`docs/M2-MODEL.md`](docs/M2-MODEL.md) and
+[`docs/M3-ENFORCEMENT.md`](docs/M3-ENFORCEMENT.md).
 
 ## Install and verify activation
 
@@ -40,6 +43,33 @@ See [`docs/config.example.json`](docs/config.example.json) and [`docs/config.sch
 
 No built-in command-name “read-only” grants ship. The bounded literal recognizer produces specific review reasons, not automatic authority. Source inspection found that parsing `git`, `find`, `sed`, etc. cannot attest their executable, flags, configuration or shell startup context. Built-in easy-safe presets and structured prefix matching are deliberately deferred; see [`docs/M1-POLICY.md`](docs/M1-POLICY.md).
 
+## Decisions Model
+
+Optional, off by default, and configured under `model`:
+
+```json
+{
+  "model": {
+    "mode": "enforce",
+    "profile": "minrule-4q-conservative",
+    "enforceAcknowledgement": "I understand this profile is provisional and its allows may be wrong",
+    "endpoint": { "baseUrl": "http://127.0.0.1:9931", "model": "<exact served id>", "timeoutMs": 2000 },
+    "maxPayloadTokens": 1024
+  }
+}
+```
+
+- **Mode `enforce` is refused without that exact acknowledgement string.** The model block is rejected, the model switches off, and the reason is displayed — because `enforce` gives the model the power to block a command without asking you first.
+- Ordering is fixed: **blacklist → whitelist → model → you**. The model sees only calls deterministic policy left undecided, and no model result can bypass the blacklist.
+- **An approval is always yours.** `allow` in every mode routes to review. `deny` is terminal only in `enforce`.
+- Every failure mode — endpoint down, timeout, non-JSON, out-of-range answer, wrong served identity, breaker open, queue deadline, oversize payload, your cancellation — defers to you with a distinct reason code. There is no `failOpen` option and no automatic retry after a reset or size refusal.
+- Operational controls: bounded endpoint concurrency, a queue with a wait deadline, a circuit breaker so a dead endpoint cannot add its timeout to every command, and model-only in-flight deduplication that shares **computation** and never an approval, review or record.
+- Deterministic rules and floors still run with the endpoint down or the breaker open.
+
+**No profile is `operational`; all are provisional.** A profile becomes a *candidate* for autonomous blocking only on measured evidence from *your own* reviewed decisions, and the tooling refuses to report anything else — see [Evaluating a profile](#evaluating-a-profile).
+
+Inspect live posture with `/permissions`: mode, profile and identity, endpoint health, breaker state, review queue depth, last reason. Reading raw records is not required.
+
 ## Human review
 
 Unmatched calls show the **complete command**, cwd, request ID, concrete **why review**, known input context (or explicit unknown), shell prefix and execution unknowns. Approve once or reject. Controls and bidi characters are visibly escaped without changing the original snapshot. Dialogs are serialized, bounded to 16 pending requests, with a 60-second total queue+review deadline. Escape/dismissal, timeout, UI failure, cancellation and late answers cannot approve a call. Reviews are cancelled on new input, session navigation, compaction and shutdown. An approval never releases a sibling request.
@@ -69,7 +99,30 @@ bun test
 bun run verify
 bun run test:pi --consent           # opt-in disposable Git install + real Node/Pi SDK smoke
 bun run evaluate                     # profile comparison over labelled cases (fake endpoint)
+bun scripts/measure-enforcement.ts --guidance     # what each profile is for
+bun scripts/export-labels.ts          # label templates from your real decisions
+bun scripts/measure-enforcement.ts --labels <file>
 MODEL_BASE_URL=http://host:port bun run test:live   # opt-in endpoint contract check
 ```
+
+## Evaluating a profile
+
+Whether a profile's false-allow rate is *known* well enough to block on is a
+measurement, not a property of its description. The tooling enforces that:
+
+1. `scripts/export-labels.ts` turns your recorded decisions into label templates.
+2. You fill in `label` (`safe`/`dangerous`/`unsure`), `reviewedBy`, `reviewedAt`.
+   A row with no named adjudicator is not evidence, and is refused.
+3. `scripts/measure-enforcement.ts` scores each profile on a deterministic,
+   family-stratified **held-out** split — so a profile is never judged on the
+   examples it was chosen with — and prints `insufficient-evidence`, `rejected` or
+   `candidate`. Below 10 reviewed held-out examples per family, or if any held-out
+   dangerous or unresolved case would have been approved, the answer is not
+   "looks fine".
+
+`candidate` means the evidence did not object. It does not grant authority: the
+profile still ships provisional, and `enforce` still needs the acknowledgement
+above. Author-written cases can detect a regression; they cannot estimate a
+false-allow rate, and the report keeps them separate.
 
 Offline tests classify candidate text only, never execute corpus commands. The opt-in smoke uses automated UI adapters and only an isolated harmless sentinel operation; it is not proof of physical human confirmation or a top-level provider loop. Its model scenarios talk only to a `127.0.0.1` fixture, and every other socket is blocked. See [`docs/PI-PLATFORM.md`](docs/PI-PLATFORM.md) for exact isolation, tested paths and gaps, and [`PLAN.md`](PLAN.md) for remaining milestones.

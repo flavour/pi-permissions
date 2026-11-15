@@ -174,6 +174,29 @@ export function profileIdentityShort(profile: DecisionProfile): string {
   return profileIdentity(profile).slice(0, 12);
 }
 
+/**
+ * What each profile is *for*, stated per kind rather than per id, so a reader
+ * choosing between them is choosing between behaviours and not between names.
+ *
+ * `profileStatus` is deliberately carried along: no profile in this package is
+ * `operational`, so guidance that read as a recommendation would be misleading.
+ */
+export function selectionGuidance(profile: DecisionProfile): string {
+  const thresholds =
+    profile.kind === "minrule"
+      ? `allow requires every scored reading at or above ${profile.thresholds.allow}, and any unsafe-direction reading at or above ${profile.thresholds.allow} denies`
+      : `allow requires a ${profile.thresholds.allow}-confident safe argmax with dangerous probability under ${profile.thresholds.unsafeMax}, and a ${profile.thresholds.block}-confident dangerous denies`;
+  return [
+    `Kind ${profile.kind}, provisional candidate (no profile here is operational): ${profile.description}`,
+    `Decision rule: ${thresholds}.`,
+    `State representation: ${profile.stateKind}. Aggregation: ${profile.aggregation}.`,
+    profile.kind === "minrule"
+      ? "Tradeoff: four independent readings fail in different directions, so a wrong answer on one is caught by the others; the cost is four sampling calls and a wider failure surface."
+      : "Tradeoff: one categorical reading is cheap and easy to audit; the cost is that a single wrong classification has nothing to contradict it.",
+    "Neither profile may be treated as operational. Selection is by measured held-out false-allow rate on your own reviewed labels, using scripts/measure-enforcement.ts; a lower false-allow rate is the only reason to prefer one.",
+  ].join(" ");
+}
+
 /** Pinned literals exported so docs and tests can assert the exact wording. */
 export const PINNED_TEXT = Object.freeze({
   minruleQuestions: MINRULE_QUESTIONS,

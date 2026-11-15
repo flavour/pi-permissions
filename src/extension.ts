@@ -5,34 +5,52 @@ import {
   isToolCallEventType,
   VERSION,
 } from "@earendil-works/pi-coding-agent";
-import { createShadowConsultant } from "./adapter.js";
+import { createModelConsultant } from "./adapter.js";
 import { visible } from "./ask.js";
-import { loadConfig } from "./config.js";
+import { type LoadedConfig, loadConfig } from "./config.js";
 import { Handler } from "./handler.js";
 import { IntentTracker } from "./provenance.js";
 import { writeRecord } from "./records.js";
 import { snapshot } from "./request.js";
+import { GateRuntime } from "./runtime.js";
 
-/** Startup posture for the model, never implying any model authority. */
-function modelStatusText(config: {
-  model: {
-    state: string;
-    mode?: string;
-    profile?: string;
-    diagnostic?: string;
-  };
-}): string {
-  if (config.model.state === "ready")
-    return `Model ${config.model.mode} (profile ${config.model.profile}, proposals only: no model authority).`;
-  if (config.model.state === "invalid")
-    return `Model off: ${config.model.diagnostic ?? "invalid model configuration"}`;
+/** Startup posture for the model, stating exactly what authority it holds. */
+function modelStatusText(config: LoadedConfig): string {
+  const model = config.model;
+  if (model.state === "ready") {
+    if (model.mode === "enforce")
+      return `Model ENFORCE (profile ${model.profile}): a model deny blocks, a model allow still needs your approval. This profile is PROVISIONAL — unmeasured false-allow rate.`;
+    return `Model ${model.mode} (profile ${model.profile}, proposals only: no model authority).`;
+  }
+  if (model.state === "invalid")
+    return `Model off: ${model.diagnostic ?? "invalid model configuration"}`;
   return "Model off.";
+}
+
+/** The model step for one request snapshot, with that snapshot's own bounds. */
+function consultant(
+  config: LoadedConfig,
+  runtime: GateRuntime,
+  getBranch: () => string | undefined,
+) {
+  const status = config.model;
+  const mode = status.mode === "enforce" ? "enforce" : "shadow";
+  if (status.state !== "ready" || !status.config)
+    return createModelConsultant(status, mode);
+  const controls = runtime.controls(status.config);
+  return createModelConsultant(status, mode, {
+    getBranch,
+    controls,
+    ...(status.config.operational.dedupe ? { share: controls.share } : {}),
+    configRevision: config.revision,
+  });
 }
 
 /** Pi owns the final execution path. Later mutating extensions are outside this boundary. */
 export default function install(pi: ExtensionAPI): void {
   const handler = new Handler();
   const intent = new IntentTracker();
+  const runtime = new GateRuntime();
   let lifetime = new AbortController();
   let turnId = randomUUID();
   let expectedInitialUserMessage = false;
@@ -40,6 +58,8 @@ export default function install(pi: ExtensionAPI): void {
     lifetime.abort();
     lifetime = new AbortController();
     intent.reset();
+    // In-flight model work belongs to the session/turn that is going away.
+    runtime.clear();
     expectedInitialUserMessage = false;
     turnId = randomUUID();
   };
@@ -86,6 +106,32 @@ export default function install(pi: ExtensionAPI): void {
   pi.on("session_before_tree", invalidate);
   pi.on("session_before_compact", invalidate);
   pi.on("session_shutdown", invalidate);
+
+  /** Inspect live posture without reading raw records. */
+  pi.registerCommand("permissions", {
+    description:
+      "Show pi-permissions posture: mode, profile, endpoint health, review queue, last reason",
+    handler: async (_args, ctx) => {
+      const config = loadConfig(getAgentDir());
+      const endpoint = runtime.status();
+      const lines = [
+        `pi-permissions: gate ACTIVE for built-in bash; mode ${ctx.mode}; config ${config.status} (revision ${config.revision.slice(0, 12)}…).`,
+        modelStatusText(config),
+        config.diagnostic ??
+          "Deterministic rules: exact whitelist/blacklist only; no built-in automatic grants.",
+        config.config.blacklist.length + config.config.whitelist.length === 0
+          ? "Rules: none configured."
+          : `Rules: ${config.config.whitelist.length} whitelist, ${config.config.blacklist.length} blacklist.`,
+        endpoint
+          ? `Endpoint ${endpoint.origin}: circuit ${endpoint.breaker.state} (${endpoint.breaker.consecutive}/${endpoint.breaker.failures} counted failures, ${endpoint.breaker.trips} trips), in flight ${endpoint.queue.active}/${endpoint.queue.concurrency} with ${endpoint.queue.queued} queued, ${endpoint.sharedComputations} shared computation(s).`
+          : "Endpoint: not contacted since load.",
+        `Reviews: ${handler.pendingReviews} waiting or in dialog. Last decision: ${handler.lastDecision ?? "none this session"}.`,
+      ];
+      const message = lines.join("\n");
+      if (ctx.hasUI) ctx.ui.notify(message, "info");
+      else console.error(message);
+    },
+  });
 
   pi.on("tool_call", async (event, ctx) => {
     if (!isToolCallEventType("bash", event)) return;
@@ -164,13 +210,17 @@ export default function install(pi: ExtensionAPI): void {
         signal,
         confirm: (title, message, options) =>
           ctx.ui.confirm(title, message, options),
-        model: createShadowConsultant(config.model, {
-          getBranch: () => {
-            const model = (ctx as { model?: { info?: { branch?: string } } })
-              .model;
-            return model?.info?.branch;
-          },
+        model: consultant(config, runtime, () => {
+          const model = (ctx as { model?: { info?: { branch?: string } } })
+            .model;
+          return model?.info?.branch;
         }),
+        // Authority comes from the resolved posture, not from what a model says
+        // about itself: an invalid enforce block grants nothing here.
+        modelAuthority:
+          config.model.state === "ready" && config.model.mode === "enforce"
+            ? "selected_profile"
+            : "none",
         record: (record) => {
           if (config.config.records !== false)
             writeRecord(getAgentDir(), record);

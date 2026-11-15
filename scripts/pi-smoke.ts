@@ -77,7 +77,7 @@ async function command(
       new Response(proc.stderr).text(),
     ]);
     if (out && !quiet) console.log(out.trimEnd());
-    if (code !== 0) throw new Error(`${args[0]} exited ${code}: ${err}`);
+    if (code !== 0) throw new Error(`${args[0]} exited ${code}:\n${err}`);
     return out;
   } finally {
     clearTimeout(timer);

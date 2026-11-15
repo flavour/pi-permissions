@@ -1,3 +1,6 @@
+import type { BreakerSnapshot } from "./decisions/breaker.js";
+import type { LimiterSnapshot } from "./decisions/limiter.js";
+
 export interface BashRequest {
   readonly requestId: string;
   readonly sessionId: string;
@@ -16,7 +19,8 @@ export interface BashRequest {
 
 export interface Assessment {
   readonly kind: "allow" | "deny" | "defer";
-  readonly source: "policy" | "human" | "runtime";
+  /** Who decided. `decisions-model` only ever appears on the enforce path. */
+  readonly source: "policy" | "decisions-model" | "human" | "runtime";
   readonly reasonCode: string;
   readonly explanation: string;
   readonly ruleId?: string;
@@ -24,13 +28,16 @@ export interface Assessment {
 
 /**
  * What the Decisions Model proposed, recorded separately from what the gate
- * did. `authority` is `none` while model authority is shadow: no code path turns
- * a shadow proposal into an allow or a block.
+ * did. `authority` is the whole safety question in one field: `none` means the
+ * proposal cannot move a decision, and `selected_profile` is only ever set by
+ * the explicit enforce path, where a model `deny` is terminal and a model
+ * `allow` is provisional. Deterministic blacklist precedence and whitelist
+ * authority are never weakened by a model outcome in either mode.
  */
 export interface ModelAssessment {
   readonly kind: "allow" | "deny" | "defer";
   readonly mode: "off" | "shadow" | "enforce";
-  readonly authority: "none";
+  readonly authority: "none" | "selected_profile";
   readonly reasonCode: string;
   /** One display-safe sentence: no endpoint bodies, no credentials. */
   readonly explanation: string;
@@ -48,6 +55,16 @@ export interface ModelAssessment {
   readonly dropped?: readonly string[];
   readonly readings?: Readonly<Record<string, number>>;
   readonly choices?: Readonly<Record<string, string>>;
+  /** Endpoint token accounting, when reported. Never a compute budget. */
+  readonly usage?: {
+    readonly input_tokens: number;
+    readonly output_tokens: number;
+  };
+  /** Operational bounds observed for this attempt. */
+  readonly breaker?: BreakerSnapshot;
+  readonly queue?: LimiterSnapshot;
+  /** Shared with a concurrent identical model computation (never approval). */
+  readonly shared?: boolean;
 }
 
 export function snapshot(request: BashRequest): BashRequest {

@@ -21,7 +21,11 @@ export type EndpointFailureKind =
   | "http"
   | "parse"
   | "identity"
-  | "range";
+  | "range"
+  /** Caller cancellation. Never endpoint ill-health, so never breaker fuel. */
+  | "cancelled"
+  /** Anything that was not a classified transport/protocol failure. */
+  | "unknown";
 
 export class EndpointError extends Error {
   readonly kind: EndpointFailureKind;
@@ -56,15 +60,28 @@ export interface AskResult {
   readonly latencyMs: number;
 }
 
-/** Injectable seam so unit tests can drive either a fake transport or real loopback HTTP. */
+/**
+ * Injectable seam so unit tests can drive either a fake transport or real
+ * loopback HTTP. The signal is the caller's cancellation: the default transport
+ * joins it with its own timeout, so an abandoned call stops spending.
+ */
 export type Transport = (
   url: string,
   payload: unknown,
   timeoutMs: number,
+  signal?: AbortSignal,
 ) => Promise<unknown>;
 
-function classifyFetchError(error: unknown): EndpointError {
+function classifyFetchError(
+  error: unknown,
+  caller?: AbortSignal,
+): EndpointError {
   if (error instanceof EndpointError) return error;
+  // Cancellation is checked before the error name: an aborted fetch and an
+  // abandoned request can look identical, and only one of them is the
+  // endpoint's fault. Cancellation never counts against the breaker.
+  if (caller?.aborted)
+    return new EndpointError("cancelled", "request cancelled");
   const name = error instanceof Error ? error.name : "";
   const message = error instanceof Error ? error.message : String(error);
   if (name === "TimeoutError")
@@ -77,10 +94,22 @@ function classifyFetchError(error: unknown): EndpointError {
   );
 }
 
+/**
+ * One deadline, two reasons. `AbortSignal.any` keeps the request's own timeout
+ * (a `TimeoutError`) distinct from caller cancellation (an abort of the caller's
+ * signal), because only the first counts against the breaker.
+ */
+function combinedSignal(timeoutMs: number, caller?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  if (!caller) return timeout;
+  return AbortSignal.any([caller, timeout]);
+}
+
 async function fetchTransport(
   url: string,
   payload: unknown,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -88,10 +117,10 @@ async function fetchTransport(
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: combinedSignal(timeoutMs, signal),
     });
   } catch (error) {
-    throw classifyFetchError(error);
+    throw classifyFetchError(error, signal);
   }
   if (!response.ok) {
     // Bodies can echo request content; keep only a short status marker.
@@ -114,6 +143,8 @@ export interface AskOptions {
   readonly state: unknown;
   readonly questions: unknown;
   readonly timeoutMs: number;
+  /** Caller cancellation. Distinct from the request timeout in the failure kind. */
+  readonly signal?: AbortSignal;
   readonly transport?: Transport;
   readonly now?: () => number;
 }
@@ -132,11 +163,22 @@ export async function askSystemOne(options: AskOptions): Promise<AskResult> {
   const started = now();
   let raw: unknown;
   try {
-    raw = await transport(url, payload, options.timeoutMs);
+    if (options.signal?.aborted)
+      throw new EndpointError("cancelled", "aborted before sending");
+    raw = await transport(
+      url,
+      payload,
+      options.timeoutMs,
+      options.signal ?? undefined,
+    );
   } catch (error) {
     if (error instanceof EndpointError) throw error;
+    // A transport that does not honour cancellation still cannot deliver an
+    // answer the caller has abandoned.
+    if (options.signal?.aborted)
+      throw new EndpointError("cancelled", "cancelled during send");
     throw new EndpointError(
-      "parse",
+      "unknown",
       error instanceof Error ? error.message.slice(0, 200) : "transport threw",
     );
   }

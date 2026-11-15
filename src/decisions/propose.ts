@@ -9,8 +9,15 @@
  *    `not_wholly_visible`; the endpoint is not called, and a floor is never an
  *    auto-allow
  * 3. payload over budget → `state_over_budget` (the call is not sent in pieces)
- * 4. endpoint failure → `endpoint_<kind>`
- * 5. aggregation → `allow` / `deny` / `defer`
+ * 4. operational bounds → `breaker_open`, `probe_in_flight`, `queue_full`,
+ *    `queue_wait` (the endpoint is not contacted; nothing here can approve)
+ * 5. endpoint failure → `endpoint_<kind>`, or `cancelled` if the caller went
+ *    away mid-send
+ * 6. aggregation → `allow` / `deny` / `defer`
+ *
+ * Every one of these bounds is a limiter, breaker or budget decision, never a
+ * safety verdict: the human still decides, and deterministic rules and floors
+ * ran before any of them.
  *
  * A dropped context field means the model is missing the evidence the
  * `authorized` question needs, so an `allow` is downgraded to `defer`: material
@@ -22,11 +29,22 @@
 
 import { aggregate } from "./aggregate.js";
 import {
+  type BreakerDecision,
+  type BreakerSnapshot,
+  type CircuitBreaker,
+  outcomeFor,
+} from "./breaker.js";
+import {
   aggregateChoice,
   type DecisionLabel,
   decisionLabelPhrase,
 } from "./choice.js";
 import { floorRefusal, opaqueRefusal } from "./floor.js";
+import {
+  type EndpointLimiter,
+  type LimiterSnapshot,
+  QueueError,
+} from "./limiter.js";
 import {
   type ChoiceThresholds,
   type DecisionProfile,
@@ -34,7 +52,13 @@ import {
   profileIdentity,
 } from "./profile.js";
 import { buildRequestPayload } from "./state.js";
-import { askSystemOne, EndpointError, type Transport } from "./systemone.js";
+import {
+  type AskOptions,
+  askSystemOne,
+  EndpointError,
+  type Transport,
+  type Usage,
+} from "./systemone.js";
 
 export interface ModelCallInput {
   readonly command: string;
@@ -52,6 +76,16 @@ export interface ModelSettings {
   readonly maxPayloadTokens: number;
 }
 
+/**
+ * Operational bounds shared by every request to one endpoint. They decide
+ * whether a request may be attempted at all; they never decide safety, and a
+ * refusal here is a `defer` that still reaches a human.
+ */
+export interface EndpointControls {
+  readonly limiter: EndpointLimiter;
+  readonly breaker: CircuitBreaker;
+}
+
 export interface ModelDeps {
   readonly transport?: Transport;
   readonly now?: () => number;
@@ -62,12 +96,21 @@ export interface ModelDeps {
    * than the floors in front of it. Only the live gate uses `enforce`.
    */
   readonly floors?: "enforce" | "measurement";
+  /** Absent means unbounded (offline comparison only); the live gate always supplies it. */
+  readonly controls?: EndpointControls;
 }
 
 export type ProposalKind = "allow" | "deny" | "defer";
 
 export interface ModelProposal {
   readonly kind: ProposalKind;
+  /**
+   * True only when the endpoint answered and its reading was interpreted. Every
+   * pre-send exit (floor, budget, breaker, queue, cancellation) and every
+   * transport failure is `false`, so a caller can tell "the model disagreed"
+   * from "the model never spoke" instead of inferring it from a reason code.
+   */
+  readonly answered: boolean;
   readonly reasonCode: string;
   /** One sentence, display-safe: no endpoint bodies and no credentials. */
   readonly reason: string;
@@ -83,6 +126,14 @@ export interface ModelProposal {
   readonly latencyMs: number;
   readonly dropped: readonly string[];
   readonly tokensEstimate?: number;
+  /** Endpoint accounting, when the endpoint reported it. Never a budget. */
+  readonly usage?: Usage;
+  /** Operational state at the moment of the attempt, for diagnosis. */
+  readonly breaker?: BreakerSnapshot;
+  /** Queue occupancy at the moment of the attempt, for diagnosis. */
+  readonly queue?: LimiterSnapshot;
+  /** This proposal came from a concurrent identical computation. */
+  readonly shared?: boolean;
   readonly readings?: Readonly<Record<string, number>>;
   readonly choices?: Readonly<Record<string, string>>;
 }
@@ -113,6 +164,11 @@ type ProposalFields = Pick<ModelProposal, "kind" | "reasonCode" | "reason"> &
       | "readings"
       | "choices"
       | "servedModel"
+      | "answered"
+      | "usage"
+      | "breaker"
+      | "queue"
+      | "shared"
     >
   >;
 
@@ -122,6 +178,7 @@ function frozen(
 ): ModelProposal {
   const profile = settings.profile;
   return Object.freeze({
+    answered: false,
     profileId: profile.id,
     profileIdentity: profileIdentity(profile),
     questionsTextVersion: profile.questionsTextVersion,
@@ -209,41 +266,121 @@ export function createModelJudge(deps: ModelDeps): ModelJudge {
           tokensEstimate: built.tokensEstimate,
         });
 
+      // Operational bounds come before the socket: a request that is not
+      // allowed to start must not queue, must not pay a round trip, and must
+      // not be reported as a model opinion.
+      const controls = deps.controls;
+      /** What the bounds looked like for this attempt, so a record can explain it. */
+      const observed = (): Partial<Pick<ModelProposal, "breaker" | "queue">> =>
+        controls
+          ? {
+              breaker: controls.breaker.snapshot(),
+              queue: controls.limiter.snapshot(),
+            }
+          : {};
+      const transportOptions: Omit<AskOptions, "signal"> = {
+        baseUrl: settings.baseUrl,
+        path: profile.endpointPath,
+        profile,
+        state: built.payload.state,
+        questions: built.payload.questions,
+        timeoutMs: settings.timeoutMs,
+        ...(deps.transport ? { transport: deps.transport } : {}),
+        ...(deps.now ? { now: deps.now } : {}),
+      };
+      const ask = (options: AskOptions) => askSystemOne(options);
+      let probe = false;
+      const operational = (reasonCode: string, reason: string) =>
+        frozen(settings, {
+          kind: "defer",
+          reasonCode,
+          reason,
+          dropped: built.dropped,
+          tokensEstimate: built.tokensEstimate,
+          ...observed(),
+        });
+      if (controls) {
+        const gate: BreakerDecision = controls.breaker.gate();
+        if (!gate.send) {
+          const wait = Math.max(0, Math.round(gate.retryInMs));
+          return operational(
+            gate.reason,
+            gate.reason === "breaker_open"
+              ? `the endpoint circuit is open after repeated failures, so it was not contacted and will be probed again in about ${wait}ms`
+              : "the endpoint circuit is testing one probe request, so this call was not queued behind it",
+          );
+        }
+        probe = gate.probe;
+      }
+      const giveUpProbe = () => {
+        if (probe) controls?.breaker.release();
+      };
+
       let result: Awaited<ReturnType<typeof askSystemOne>> | undefined;
       try {
-        result = await askSystemOne({
-          baseUrl: settings.baseUrl,
-          path: profile.endpointPath,
-          profile,
-          state: built.payload.state,
-          questions: built.payload.questions,
-          timeoutMs: settings.timeoutMs,
-          ...(deps.transport ? { transport: deps.transport } : {}),
-          ...(deps.now ? { now: deps.now } : {}),
-        });
+        result = await (controls
+          ? controls.limiter.run(
+              (signal) =>
+                ask({
+                  ...transportOptions,
+                  ...(signal ? { signal } : {}),
+                }),
+              signal,
+            )
+          : ask(transportOptions));
+        controls?.breaker.record("success");
       } catch (error) {
-        if (!(error instanceof EndpointError))
+        if (error instanceof QueueError) {
+          giveUpProbe();
+          return operational(
+            error.kind === "cancelled" ? "cancelled" : error.kind,
+            error.kind === "queue_full"
+              ? "the endpoint queue is full, so this call was not sent"
+              : error.kind === "queue_wait"
+                ? "no endpoint slot freed in time, so this call was not sent"
+                : "the request was cancelled while waiting for an endpoint slot",
+          );
+        }
+        if (!(error instanceof EndpointError)) {
+          if (signal?.aborted) {
+            giveUpProbe();
+            return operational("cancelled", "the request was cancelled");
+          }
+          controls?.breaker.record("counted", "unknown");
           return frozen(settings, {
             kind: "defer",
             reasonCode: "endpoint_unknown",
             reason: "the model request failed unexpectedly",
             dropped: built.dropped,
             tokensEstimate: built.tokensEstimate,
+            ...observed(),
           });
+        }
+        if (error.kind === "cancelled") {
+          giveUpProbe();
+          return operational("cancelled", "the request was cancelled");
+        }
+        controls?.breaker.record(outcomeFor(error.kind), error.kind);
         return frozen(settings, {
           kind: "defer",
           reasonCode: `endpoint_${error.kind}`,
           reason: `the model could not answer (${error.kind}: ${error.detail})`,
           dropped: built.dropped,
           tokensEstimate: built.tokensEstimate,
+          ...observed(),
         });
       }
 
       const base: Partial<ProposalFields> = {
+        // From here on the endpoint really answered, so an outcome can carry
+        // authority in enforce mode.
+        answered: true,
         servedModel: result.model,
         latencyMs: result.latencyMs,
         dropped: built.dropped,
         tokensEstimate: built.tokensEstimate,
+        ...(result.usage ? { usage: result.usage } : {}),
+        ...observed(),
       };
 
       if (profile.kind === "choice") {

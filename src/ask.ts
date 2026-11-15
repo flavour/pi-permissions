@@ -12,18 +12,19 @@ export function visible(text: string): string {
   );
 }
 
-/**
- * A shadow proposal line for the reviewer. The model's wording is operator- or
- * profile-derived text, so it is escaped exactly like the command: a proposal
- * can inform the human, never instruct the terminal.
- */
+/** A proposal line for the reviewer. */
 export function modelProposalLines(model: ModelAssessment): string[] {
   const profile = model.profileId ? ` [profile ${model.profileId}]` : "";
+  const shadow = model.authority === "none";
   return [
-    `Decisions model proposal (${model.mode}, no authority): ${model.kind}${profile} — ${visible(
-      model.explanation,
-    )}`,
-    "The model cannot approve or block this call. Your decision is the decision.",
+    `Decisions model proposal (${model.mode}, ${
+      shadow
+        ? "no authority"
+        : "provisional enforce authority: an allow is provisional, a deny is terminal"
+    }): ${model.kind}${profile} — ${visible(model.explanation)}`,
+    shadow
+      ? "The model cannot approve or block this call. Your decision is the decision."
+      : "Your approval is still required before this call can run; the model cannot approve it alone.",
   ];
 }
 
@@ -56,14 +57,31 @@ export type Confirm = (
   options: { signal: AbortSignal; timeout: number },
 ) => Promise<boolean>;
 
-/** Serialized one-shot dialogs, with a total queue+dialog deadline and bounded queue. */
+/**
+ * One-shot review with no shared state: each call owns its queue slot, its own
+ * deadline, and its own approval.
+ *
+ * `deadlineMs` is a *total* bound measured from the moment the request arrived,
+ * covering queue wait plus dialog, so a caller cannot be held behind an
+ * abandoned predecessor indefinitely. `maxPending` bounds how many reviews may
+ * wait at all; beyond it a caller is refused immediately rather than queued.
+ * The bound is optional: a single-caller host that wants a plain fixed dialog
+ * window omits it, and nothing is measured from a shared start time.
+ */
 export class HumanReviewer {
   private tail: Promise<void> = Promise.resolve();
   private pending = 0;
   constructor(
     private readonly timeout = 60_000,
     private readonly now = () => performance.now(),
+    private readonly maxPending = 16,
+    private readonly deadlineMs: number | undefined = undefined,
   ) {}
+
+  /** How many reviews are waiting or in front of the dialog right now. */
+  get pendingCount(): number {
+    return this.pending;
+  }
 
   async review(
     request: BashRequest,
@@ -72,13 +90,27 @@ export class HumanReviewer {
     signal?: AbortSignal,
     model?: ModelAssessment,
   ): Promise<Assessment> {
-    if (this.pending >= 16)
+    if (this.pending >= this.maxPending)
       return denied(
         "review_queue_full",
         "Human review queue is full; retry only after consulting the user.",
       );
     this.pending++;
-    const deadline = this.now() + this.timeout;
+    const deadline =
+      this.deadlineMs === undefined
+        ? Number.POSITIVE_INFINITY
+        : this.now() + this.deadlineMs;
+    const remaining = () =>
+      this.deadlineMs === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, deadline - this.now());
+    /**
+     * The caller's whole life is bounded: queue wait plus dialog cannot exceed
+     * one dialog window, nor the total bound measured from arrival, whichever is
+     * shorter. The timer is armed at arrival so waiting behind an abandoned
+     * review is bounded too, and the dialog shows the remainder as its countdown.
+     */
+    const budget = () => Math.min(this.timeout, remaining());
     const previous = this.tail;
     let release = () => {};
     const slot = new Promise<void>((resolve) => {
@@ -93,7 +125,7 @@ export class HumanReviewer {
     const timer = setTimeout(() => {
       expired = true;
       abort();
-    }, this.timeout);
+    }, budget());
     let removeAbort = () => {};
     const cancelled = new Promise<false>((resolve) => {
       const done = () => resolve(false);
@@ -103,27 +135,27 @@ export class HumanReviewer {
     });
     try {
       const ready = await Promise.race([previous.then(() => true), cancelled]);
-      if (this.now() >= deadline) {
-        expired = true;
-        abort();
-      }
       if (!ready || controller.signal.aborted)
         return denied(
           expired ? "review_timeout" : "review_cancelled",
           "Review expired or was cancelled; no approval was granted.",
         );
+      // Never open a dialog with no time in it: a caller whose total bound has
+      // already been spent waiting for an earlier review is refused, not flashed.
+      const dialogMs = budget();
+      if (dialogMs <= 0)
+        return denied(
+          "review_timeout",
+          "Review expired while waiting for an earlier review; no approval was granted.",
+        );
       const approved = await Promise.race([
         confirm(
           "pi-permissions: approve once?",
           buildHumanPrompt(request, why, model),
-          { signal: controller.signal, timeout: this.timeout },
+          { signal: controller.signal, timeout: dialogMs },
         ),
         cancelled,
       ]);
-      if (this.now() >= deadline) {
-        expired = true;
-        abort();
-      }
       if (controller.signal.aborted)
         return denied(
           expired ? "review_timeout" : "review_cancelled",

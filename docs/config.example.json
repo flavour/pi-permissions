@@ -24,6 +24,15 @@
       "baseUrl": "http://jetson.lan:9931",
       "model": "LiquidAI/d1-2B-GGUF:Q8_0",
       "timeoutMs": 1500
-    }
+    },
+    "operational": {
+      "concurrency": 1,
+      "maxQueue": 2,
+      "maxWaitMs": 750,
+      "breakerFailures": 3,
+      "breakerCooldownMs": 60000,
+      "dedupe": false
+    },
+    "enforceAcknowledgement": "I understand this profile is provisional and its allows may be wrong"
   }
 }

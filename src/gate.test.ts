@@ -131,7 +131,7 @@ describe("human review", () => {
   });
   it("bounds the review queue and expires queued work without showing it", async () => {
     let now = 0;
-    const reviewer = new HumanReviewer(5, () => now);
+    const reviewer = new HumanReviewer(5, () => now, 16, 5);
     let shown = 0;
     const confirm = () => {
       shown++;

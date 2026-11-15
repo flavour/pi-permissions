@@ -15,7 +15,7 @@ import {
   startEndpoint,
 } from "../scripts/fixtures/endpoint.js";
 import { createShadowConsultant, toShadowAssessment } from "./adapter.js";
-import { MODEL_OFF, type ModelStatus } from "./config.js";
+import { MODEL_OFF, type ModelStatus, OPERATIONAL_DEFAULTS } from "./config.js";
 import { getProfile } from "./decisions/profile.js";
 import { type BashRequest, snapshot } from "./request.js";
 
@@ -58,6 +58,7 @@ function ready(
       profile,
       endpoint: { baseUrl, model: "LiquidAI/d1-2B-GGUF:Q8_0", timeoutMs: 1000 },
       maxPayloadTokens: 1024,
+      operational: OPERATIONAL_DEFAULTS,
     },
   };
 }
@@ -89,6 +90,7 @@ describe("shadow consultant construction", () => {
           timeoutMs: 1000,
         },
         maxPayloadTokens: 1024,
+        operational: OPERATIONAL_DEFAULTS,
       },
     };
     expect(createShadowConsultant(status)).toBeUndefined();
@@ -227,6 +229,9 @@ describe("shadow proposals", () => {
     if (!profile) throw new Error("missing profile");
     const assessment = toShadowAssessment({
       kind: "allow",
+      // The endpoint answered in this fixture; authority still comes out `none`
+      // because the consultant was built for shadow mode.
+      answered: true,
       reasonCode: "allow",
       reason: "ok",
       profileId: profile.id,

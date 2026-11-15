@@ -3,3 +3,4 @@
 export { HumanReviewer } from "./ask.js";
 export { Handler } from "./handler.js";
 export { snapshot } from "./request.js";
+export { GateRuntime } from "./runtime.js";

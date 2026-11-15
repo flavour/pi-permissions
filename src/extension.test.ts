@@ -29,6 +29,7 @@ function deferred<T>() {
 function host() {
   type Callback = (event: unknown, context: unknown) => unknown;
   const callbacks = new Map<string, Callback>();
+  const commands = new Map<string, Callback>();
   const prompts: string[] = [];
   const statuses: string[] = [];
   const notices: string[] = [];
@@ -44,6 +45,9 @@ function host() {
     },
     getAllTools: () => [{ name: "bash", sourceInfo: { source, path } }],
     getSettings: () => ({ shellCommandPrefix: prefix }),
+    registerCommand: (name: string, command: { handler?: Callback }) => {
+      commands.set(name, command.handler ?? (async () => {}));
+    },
   };
   const context = {
     mode: "tui",
@@ -74,11 +78,18 @@ function host() {
   };
   return {
     callbacks,
+    commands,
     context,
     prompts,
     statuses,
     notices,
     emit,
+    /** Invoke a registered slash command the way Pi's host would. */
+    run: async (name: string, args = "") => {
+      const command = commands.get(name);
+      if (!command) throw new Error(`Missing command: ${name}`);
+      await command(args, context as unknown as ExtensionContext);
+    },
     approve: (callback: () => Promise<boolean>) => {
       confirm = callback;
     },
